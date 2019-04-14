@@ -1,0 +1,578 @@
+---
+title: "Machine Learning Assignment 1"
+author: "Sohamjit Mukherjee"
+date: "16 February 2019"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+---
+<style type="text/css">
+.main-container {
+  max-width: 1800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#<span style="color:turquoise">1) Problem Overview.
+
+<span style="color:green">The dataset provided contains explanatory variables of about 15 thousands employees of a large company. The goal of the case study is to model the probability of attrition of each employee as well as to understand which variables are most important and need to be addressed right away.
+The result obtained will be helpful for the management in order to understand what changes they should make to their workplace so that they can make their employees stay in the company for longer time.</span>
+
+
+#<span style="color:turquoise"> 2) Loading packages.
+
+<span style="color:green">First let's remove all the objects we created so far and install and load the package needed in order to start from an empty environment.
+
+```{r , warning=FALSE}
+
+rm(list=ls())
+
+if(!require(data.table)){
+    install.packages("data.table")
+    suppressMessages(library(data.table))
+}
+
+if(!require(e1071)){
+    install.packages("e1071")
+    suppressMessages(library(e1071))
+}
+
+if(!require(caret)){
+    install.packages("caret")
+    suppressMessages(library(caret))
+}
+
+if(!require(tidyr)){
+    install.packages("tidyr")
+    suppressMessages(library(tidyr))
+}
+
+if(!require(corrplot)){
+    install.packages("corrplot")
+    suppressMessages(library(corrplot))
+}
+
+if(!require(gridExtra)){
+    install.packages("gridExtra")
+    suppressMessages(library(gridExtra))
+}
+
+if(!require(xgboost)){
+    install.packages("xgboost")
+    suppressMessages(library(xgboost))
+}
+
+if(!require(Matrix)){
+    install.packages("Matrix")
+    suppressMessages(library(Matrix))
+}
+
+if(!require(ggplot2)){
+    install.packages("ggplot2")
+    suppressMessages(library(ggplot2))
+}
+
+if(!require(dplyr)){
+    install.packages("dplyr")
+    suppressMessages(library(dplyr))
+}
+
+```
+
+#<span style="color:turquoise"> 3) Data Loading.
+
+<span style="color:green">The dataset from the kaggle website is downloaded and stored in the local disk. The file is in the .csv format. The below code chunk reads the entires dataset into a variable HR_Analytics and converts into a data table format which is easier for doing analysis.
+
+```{r}
+
+HR_Analytics = as.data.table(read.csv("turnover.csv", sep=",",header= T))
+head(HR_Analytics,10)
+
+```
+
+#<span style="color:turquoise"> 4) Data Preparation.
+
+##<span style="color:brown"> 4.1) Check the overall structure of the data table & also check how many unquie values we have per column.
+
+```{r, echo=FALSE, error=FALSE, message=FALSE, warning=FALSE}
+
+str(HR_Analytics)
+sapply(HR_Analytics, function(x) length(unique(x)))
+
+```
+<span style="color:green"> 4.1)The general observation is that we have 9 columns in the dataset. Out of which "salary" and "sales"(which implies departments in which the employees work) are charecter variable and can be classified as factors. Also "work_accident", "left", & "promotion_last_5years" has only 2 unique values and can basically be considered as flag variables.
+
+##<span style="color:brown"> 4.2) Checking for missing values.
+
+```{r, echo=FALSE, error=FALSE, message=FALSE, warning=FALSE}
+
+sapply(HR_Analytics,function(x) sum(is.na(x)))
+
+```
+
+<span style="color:green">There are no missing values in any of the columns. The dataset is quite clean. So we donot need to impute any values. 
+
+##<span style="color:brown"> 4.3) Refactor to proper data type.
+
+<span style="color:green">As we have seen before, we will convert the columns "left", "work_accident" & "promotion_last_5years" into factor variables.
+
+```{r, warning=FALSE}
+
+HR_Analytics$Work_accident = as.factor(HR_Analytics$Work_accident)
+HR_Analytics$promotion_last_5years = as.factor(HR_Analytics$promotion_last_5years)
+
+```
+
+##<span style="color:brown"> 4.4) Outlier detection.
+
+<span style="color:green">The function below creates boxplot automatically for all the numerical columns.
+
+```{r,fig.align='center',fig.show='hold'}
+for (i in names(HR_Analytics)){
+  if (is.integer(HR_Analytics[[i]])==T | is.numeric(HR_Analytics[[i]])==T) {
+    boxplot(HR_Analytics[[i]],
+          main = paste("Boxplot of ", i, sep =" "))
+    
+  }
+}
+
+```
+
+<span style="color:green"> From the box plots of the numerical variables it can be infered that none of the numerical columns contains any outliers. At first sight, it may seem that the "time_spend_company" contains outliers but on detail inspection it can be found it is also a kind of a categorical variable. We will modify and prepare this column latter.
+
+##<span style="color:brown"> 4.5) Summary Statistics
+
+```{r}
+
+summary(HR_Analytics)
+
+```
+
+
+#<span style="color:turquoise">5) Explanatory Data Analysis
+
+##<span style="color:brown">5.1) Correlation Matrix.
+
+```{r,fig.align='center',fig.width= 8, fig.height= 8}
+HR_Analytics$promotion_last_5years = as.numeric(HR_Analytics$promotion_last_5years)
+HR_Analytics$left = as.integer(HR_Analytics$left)
+HR_Analytics$Work_accident = as.integer(HR_Analytics$Work_accident)
+corrplot(corr = cor(HR_Analytics[,1:8]), method = "color", addCoef.col = "black")
+
+```
+
+<span style="color:green"> Overall there doesnot seems to be any collinearity in between variables, however we can make the following conclusions: 1) From the correlation matrix, we can see quite a high negative corrleation between satisfaction level and those who left. Basically, people tends to leave if there satisfaction level is low. 2) Secondly, people who work on many projects also have high average monthly hours and seems to get high evaluation ratings. 3) Thirdly, even though its a weak negative correlation but people having work related accidents tends to leave the company.
+
+##<span style="color:brown">5.2) Relation between departments & left
+
+```{r,fig.align='center',fig.width= 16, fig.height= 8}
+
+HR_Analytics$left=  as.factor(HR_Analytics$left)
+Plot1 = ggplot(as.data.table(table(HR_Analytics$sales)) , aes(x= reorder(V1,-N),y=N, fill =V1)) +
+        geom_bar(stat="identity") +
+        theme_classic() +
+        ggtitle("Distribution of Employees Department") +
+        xlab("Departments") +
+        ylab("Frequency") +
+        scale_fill_discrete(name = "Departments")
+
+
+Plot2 = ggplot(as.data.table(melt(table(HR_Analytics$sales, HR_Analytics$left)))
+       , aes(x= reorder(Var1,-value),y=value, fill =as.factor(Var2))) +
+  geom_bar(stat="identity") +
+  theme_classic() +
+  ggtitle("Distribution of Employees Department") +
+  xlab("Departments") +
+  ylab("Frequency") +
+  scale_fill_discrete(name = "Left")
+
+
+grid.arrange(Plot1  ,Plot2, nrow=1)
+```
+
+<span style="color:green"> Top 3 departments where most of the people are working are sales, technical and support. The distribution of the people leaving from different departments are fairly constant with people from R&d & Management leaving proportionately less.
+
+
+##<span style="color:brown">5.2) Relation between satisfaction level and left
+
+```{r,fig.align='center',fig.width= 16, fig.height= 8}
+ggplot(HR_Analytics, aes(x= average_montly_hours, y= satisfaction_level
+                         , group =left
+                         , color =as.factor(left))) +
+      geom_point() +
+      facet_wrap(~ left)+
+      theme_classic() +
+      ggtitle("Statifaction Level vs Average Monthly Hours")+
+      xlab("Average Monthly Hours") +
+      ylab("Satisfaction Level") +
+      theme(strip.text.x = element_text(size=10, face ="bold"),
+      strip.background = element_rect(colour="black", fill="white")) +
+      scale_fill_discrete(name = "Left")
+
+
+ggplot(as.data.table(table(HR_Analytics$satisfaction_level,HR_Analytics$left))
+       ,aes(x=V1 ,y = N ,fill =V2)) +
+       geom_bar(stat = "identity", width = .2 , color= "black") +
+       theme_classic() +
+       ggtitle("Distribution of Employees (Satisfaction Level)") +
+       xlab("Satisfaction Level") +
+       ylab("Frequency") +
+       theme(legend.position="top")+
+       scale_fill_discrete(name = "Left")
+
+```
+<span style="color:green"> People who have rated satisfaction level above 9.2 have never left the company and those who rated below .1 have all left the company. 
+Moreover, there seemes to be three different clusters for people who left the company. It seems that a high proportion of people who voted 0.36 to 0.4 seems to leave the company.
+
+
+##<span style="color:brown">5.3) Relation between last evalution and left.
+
+```{r,fig.align='center',fig.width= 16, fig.height= 8}
+
+ggplot(HR_Analytics, aes(x= number_project, y= last_evaluation
+                         , group =as.factor(left) 
+                         , color =as.factor(left))) +
+  geom_point() +
+  
+  theme_classic() +
+  ggtitle("Last Evaluation  vs Number of Projects")+
+  xlab("Number of Projects") +
+  ylab("Last Evaluation") +
+  facet_wrap(~left)+
+  theme(strip.text.x = element_text(size=10, face ="bold"),
+        strip.background = element_rect(colour="black", fill="white")) +
+  scale_fill_discrete(name = "Left")
+
+```
+
+<span style="color:green"> There seems to be no clear trend with last evaluation and people leaving the company. The distribution seems  to be fairly unirform.
+
+##<span style="color:brown">5.4) Relation between salary level and left
+```{r}
+ggplot(as.data.table(melt(table(HR_Analytics$salary, HR_Analytics$left)))
+       , aes(x= reorder(Var1,-value),y=value, fill =as.factor(Var2))) +
+  geom_bar(stat="identity") +
+  theme_classic() +
+  ggtitle("Distribution of Employees Salary") +
+  xlab("Salary Level") +
+  ylab("Frequency") +
+  scale_fill_discrete(name = "Left")
+```
+
+<span style="color:green"> As expected proportion of employees receiving high salries is low and also it seems that they are less likely to leave the company. Most of employees earning low to medium income seems to leave the company.
+
+
+##<span style="color:brown">5.5) Check distribution of other variables.
+
+```{r,fig.align='center',fig.show='hold' , message=F, warnings = F}
+
+# Number of Project.
+
+ ggplot(HR_Analytics, aes(x = number_project), binwidth = 20) + 
+  geom_histogram(aes(y = ..density..), fill = 'red', alpha = 0.5) + 
+  geom_density(colour = 'blue') + xlab(expression(bold('Simulated Data')))+ ggtitle("Numberof Project") +
+  ylab(expression(bold('Density')))
+
+# Time Spend in Company.
+
+    ggplot(HR_Analytics, aes(x = time_spend_company), binwidth = 20) + 
+  geom_histogram(aes(y = ..density..), fill = 'red', alpha = 0.5) + 
+  geom_density(colour = 'blue') + xlab(expression(bold('Simulated Data'))) + ggtitle("Time Spend in Company")+
+  ylab(expression(bold('Density')))
+    
+# Average Monthly Hours.
+    
+    ggplot(HR_Analytics, aes(x = average_montly_hours), binwidth = 20) + 
+  geom_histogram(aes(y = ..density..), fill = 'red', alpha = 0.5) + 
+  geom_density(colour = 'blue') + xlab(expression(bold('Simulated Data'))) + ggtitle("Average Monthly Hours")+
+  ylab(expression(bold('Density')))
+    
+# Satisfaction Level.
+
+    ggplot(HR_Analytics, aes(x = satisfaction_level), binwidth = 20) + 
+  geom_histogram(aes(y = ..density..), fill = 'red', alpha = 0.5) + 
+  geom_density(colour = 'blue') + xlab(expression(bold('Simulated Data'))) + ggtitle("Satisfaction Level")+
+  ylab(expression(bold('Density')))
+
+# Last Evaluation.
+        
+    ggplot(HR_Analytics, aes(x = last_evaluation), binwidth = 20) + 
+  geom_histogram(aes(y = ..density..), fill = 'red', alpha = 0.5) + 
+  geom_density(colour = 'blue') + xlab(expression(bold('Simulated Data'))) + ggtitle("Last Evaluation")+
+  ylab(expression(bold('Density')))
+
+```
+
+<span style="color:green"> From the above distribution of all the numeric variables it is clear that "Average Monthly Hours", "last_evaluation", and "Satisfaction_level" are not uniformly distributed and needs to scaled.
+Because of few distinct number of nodes in "number_project", "time_spend_in_company" should be treated as factor variables.
+
+#<span style="color:turquoise">6) Base Line Model
+
+##<span style="color:brown">6.1) Logistic Regression
+
+<span style="color:green"> For the base line model we will simple split the the data set into 75% train and rest 25% into test and check the accuracy.
+
+
+```{r}
+
+# Setup seed to replicate same result.
+
+set.seed(6497)
+
+#Split the data set into test and train.
+
+sample <- sample.int(n = nrow(HR_Analytics), size = floor(.75*nrow(HR_Analytics)), replace = F)
+train = HR_Analytics[sample,]
+test  = HR_Analytics[-sample,]
+
+# Run the model.
+
+model <- glm(left ~.-left ,family=binomial(link='logit'),data=train)
+
+#Check overall summary.
+
+summary(model)
+
+# Fit the result into test data set and check for accuracy.
+
+Fitted_Results = predict(model,newdata=test,type='response')
+Fitted_Results = ifelse(Fitted_Results > 0.5,1,0)
+misClasificError = mean(Fitted_Results != test$left)
+print(paste('Accuracy',1-misClasificError))
+
+```
+
+<span style="color:green"> The base line logistic model has an accuracy of about 78.5%.
+
+##<span style="color:brown">6.2) Optimization Based on Cutoff Value
+
+```{r}
+## Function to check own where accuracy is highest at which cutt off level
+cutoffs <- seq(0.1,0.9,0.1)
+accuracy <- NULL
+for (i in seq(along = cutoffs)){
+  prediction <- ifelse(model$fitted.values >= cutoffs[i], 1, 0) #Predicting for cut-off
+  accuracy <- c(accuracy,length(which(train$left ==prediction))/length(prediction)*100)
+}
+
+plot(cutoffs, accuracy, pch =19,type='b',col= "steelblue",
+     main ="Logistic Regression", xlab="Cutoff Level", ylab = "Accuracy %")
+```
+
+
+##<span style="color:brown">6.2) XGBoost.
+
+<span style="color:green">Other than logistic regression we will also run XGboost algorithm on the same test and train data set on which the logistic regression was ran so that we can compare the results.
+
+```{r}
+# Setup seed to replicate same result.
+
+set.seed(6497)
+
+#Split the data set into test and train.
+
+sample <- sample.int(n = nrow(HR_Analytics), size = floor(.75*nrow(HR_Analytics)), replace = F)
+train = HR_Analytics[sample,]
+test  = HR_Analytics[-sample,]
+
+# Conver the data set into sparse matrix
+
+trainm= sparse.model.matrix(left ~.-left, data=train)
+train_label= train[,"left"]
+train_matrix = xgb.DMatrix(data=as.matrix(trainm), label= as.matrix(train_label))
+
+
+testm= sparse.model.matrix(left ~.-left, data=test)
+test_label= test[,"left"]
+test_matrix = xgb.DMatrix(data=as.matrix(testm), label= as.matrix(test_label))
+
+xgb_params = list("Objective" = "multi:softprob",
+                  "eval_metric" = c("merror"),
+                  "num_class" = 3)
+
+# Create the watchlist data set. The xata set on which it will be tested.
+watchlist= list(train = train_matrix, test= test_matrix)
+
+# Run the model
+model = xgb.train(params = xgb_params,
+                  data= train_matrix,
+                  nrounds = 100,
+                  print_every_n = 20L,
+                  watchlist = watchlist)
+```
+
+<span style="color:green">The error is test data set is about 10%.So for the same dataset the xgboost seems to outperform normal logistic regression by about 12%. We will try to combine logistic regression with boosting to try to gain and improve on accuracy.
+
+#<span style="color:turquoise"> 7) Feature Engineering
+
+<span style="color:green">We will now try to fix skewness, create some new variables, perform cross validation and one hot encoding and check if we can increase the accuracy of our baseline logistic and xgboost models.
+
+##<span style="color:brown">7.1.1) Feature Creation : Average Monthly Hours Per Project
+
+```{r}
+HR_Analytics = HR_Analytics[,average_montly_hours_per_project := average_montly_hours/number_project]
+```
+
+##<span style="color:brown"> 7.1.2) Feature Creation :Total time spend in the company.
+
+```{r}
+HR_Analytics = HR_Analytics[,total_time_spend_in_company := average_montly_hours * time_spend_company]
+```
+
+##<span style="color:brown"> 7.1.3) Feature Creation : Is the department R&D and management
+
+```{r}
+HR_Analytics = HR_Analytics[,is_department_sales := ifelse((HR_Analytics$sales=="RandD" | HR_Analytics$sales== "management"),"Y","N")]
+```
+
+##<span style="color:brown"> 7.1.4) Feature Creation :  Satisfcation with last_evaluation.
+
+```{r}
+HR_Analytics = HR_Analytics[,sat_eva := satisfaction_level * last_evaluation]
+```
+
+##<span style="color:brown"> 7.1.5) Feature Creation :  Evaluation Per project.
+
+```{r}
+HR_Analytics = HR_Analytics[,evaluation_per_project := last_evaluation/number_project]
+```
+
+##<span style="color:brown"> 7.2) Scaling Numerical Variables
+
+```{r}
+HR_Analytics$satisfaction_level = scale(HR_Analytics$satisfaction_level)
+HR_Analytics$average_montly_hours = scale(HR_Analytics$average_montly_hours)
+HR_Analytics$last_evaluation = scale(HR_Analytics$last_evaluation)
+HR_Analytics$number_project = scale(HR_Analytics$number_project)
+HR_Analytics$average_montly_hours_per_project = scale(HR_Analytics$average_montly_hours_per_project)
+HR_Analytics$total_time_spend_in_company=scale(HR_Analytics$total_time_spend_in_company)
+```
+
+<span style="color:green"> All the numeric variables are scaled. This will help to make all the numeric variables in same unit.
+
+#<span style="color:turquoise"> 8) Intermediary Modelling
+
+```{r ,warning = F}
+
+train_control<- trainControl(method="cv", number  = 10, savePredictions = "all"
+                             ,selectionFunction ="best" ,search = "grid" )
+
+# train the model 
+gmlmodell <- train(left ~.-left
+                  -evaluation_per_project
+   ,method = "glm",family=binomial(link='logit') 
+   ,data=HR_Analytics, trControl=train_control)
+
+summary(gmlmodell)
+# make predictions
+predictions<- predict(gmlmodell,HR_Analytics, response="raw")
+
+gmlmodelbinded <- cbind(HR_Analytics,predictions)
+
+# summarize results
+confusionMatrix<- confusionMatrix(gmlmodelbinded$predictions,gmlmodelbinded$left)
+confusionMatrix
+
+```
+
+<span style="color:green"> In the intermediary new model we are able to increase our model accuracy from our base line model accuracy of about 78.5% to 83% about 5% increase from our previous model. 
+
+
+
+#<span style="color:turquoise"> 9) More Feature Engineering
+
+##<span style="color:brown"> 9.1) One hot encoding
+
+```{r}
+
+HR_Analytics_Encoded = with(HR_Analytics, data.table(model.matrix(~salary-1,HR_Analytics),satisfaction_level,last_evaluation,number_project,average_montly_hours,time_spend_company,Work_accident,left,promotion_last_5years,sales,average_montly_hours_per_project,total_time_spend_in_company,is_department_sales,sat_eva,evaluation_per_project))
+
+```
+
+<span style="color:green"> One hot encoding is performed in the salary column which basically transforms the single column into three different ones since the column has 3 distinct values in it.
+
+##<span style="color:brown"> 9.2) Skewness Detection
+
+```{r}
+
+skewness(HR_Analytics_Encoded$average_montly_hours)
+skewness(HR_Analytics_Encoded$last_evaluation)
+skewness(HR_Analytics_Encoded$total_time_spend_in_company)
+skewness(HR_Analytics_Encoded$sat_eva)
+skewness(HR_Analytics_Encoded$evaluation_per_project)
+skewness(HR_Analytics_Encoded$average_montly_hours_per_project)
+
+```
+
+<span style="color:green"> There is high skewness in total_time_spend_in_company and also in evlaution_per_project & average_monthly_hours_per_project. We will take log transform of this variables to fix the skewness.
+
+##<span style="color:brown"> 9.3) Cube Root Transformation - To Fix Skewness
+
+```{r}
+
+HR_Analytics_Encoded$total_time_spend_in_company = (HR_Analytics_Encoded$total_time_spend_in_company)^1/3
+HR_Analytics_Encoded$evaluation_per_project = (HR_Analytics_Encoded$evaluation_per_project)^1/3
+HR_Analytics_Encoded$average_montly_hours_per_project = (HR_Analytics_Encoded$average_montly_hours_per_project)^1/3
+
+```
+
+#<span style="color:turquoise"> 10) Final Modeling
+
+<span style="color:green"> We will split the data set into 90% test and train data set and rest 10% will be our holdout dataset in which we will further test the accuracy of the model. As per our previous result, we will use 10 fold cross validation on the data set and use grid search to select the best model.
+
+```{r}
+
+set.seed(2403)
+
+#Split the data set into holdout
+
+sample <- sample.int(n = nrow(HR_Analytics_Encoded), size = floor(.10*nrow(HR_Analytics_Encoded)), replace = F)
+
+Holdout_Dataset = HR_Analytics_Encoded[sample,]
+Train_Dataset = HR_Analytics_Encoded[-sample,]
+
+train_control<- trainControl(method="cv", number  = 10, savePredictions = "all"
+                             ,selectionFunction ="best" ,search = "grid" )
+
+# train the model 
+gmlmodel <- train(left ~.-left - sales
+                   ,method = "LogitBoost"
+                  #,method = "glm",family=binomial(link='logit') , 
+  ,data=Train_Dataset, trControl=train_control)
+
+gmlmodel
+# make predictions
+predictions<- predict(gmlmodel,Holdout_Dataset, response="raw")
+
+gmlmodelbinded <- cbind(Holdout_Dataset,predictions)
+
+# summarize results
+confusionMatrix<- confusionMatrix(gmlmodelbinded$predictions,gmlmodelbinded$left)
+confusionMatrix
+
+
+```
+
+<span style="color:green"> We ran 10 fold cross validation on the train data set. We are also doing grid search to identify the best model among them and applying it to the hold out data set to further test the accuracy. 
+The final accuracy of the model is about 97.5% which almost 20% more than the previous one.
+
+
+#<span style="color:turquoise"> 11) Variable Importance
+
+```{r}
+plot(varImp(gmlmodell))
+
+
+```
+
+
+<span style="color:green">  From the variable importance point of view we can say that satisfaction level, total time spend in company and average monthly hours are the three mostly importa  nt feature.
+
+
